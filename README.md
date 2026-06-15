@@ -66,7 +66,15 @@ module/lib/rbe_advisor.axl pure analysis logic (hermeticity checks + sizing)
 
 ## Development
 
+This repo is not itself a Bazel workspace, so `aspect rbe check` / `analyze`
+have nothing to analyze here and will fail with `bazel info failed` if run from
+the repo root. Develop against the unit suite, and exercise the tasks from a
+real Bazel workspace that installs this module (via `axl_local_dep`).
+
 ```sh
-aspect tests axl        # run the rbe_advisor unit suite
-aspect rbe check -- //...   # run against this repo (via the local dep in MODULE.aspect)
+# From the repo root — pure-logic unit suite (no Bazel needed):
+aspect tests axl
+
+# From a Bazel workspace with the module installed in its MODULE.aspect:
+aspect rbe check -- //...
 ```
