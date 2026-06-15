@@ -23,15 +23,16 @@ Add to your repo's `MODULE.aspect`:
 ```python
 axl_archive_dep(
     name = "rbe",
-    urls = ["https://github.com/aspect-extensions/rbe/archive/<tag>.tar.gz"],
-    integrity = "sha512-...",
-    strip_prefix = "rbe-<version>/module",
+    urls = ["https://github.com/aspect-extensions/rbe/archive/refs/tags/v0.0.1.tar.gz"],
+    integrity = "sha512-bkEp1Zg6wZxBdjUV3961M4CKbTgPF9oC7kEZ6KLjbt17sMQ2lC6eklPOzGt0lMaA/UZ3bTRSzDPSfNIFUiLMqg==",
+    strip_prefix = "rbe-0.0.1/module",
     auto_use_tasks = True,
+    dev = True,
 )
 ```
 
 `auto_use_tasks = True` registers `aspect rbe check` and `aspect rbe analyze`
-as CLI commands.
+as CLI commands. `dev = True` is currently required by `axl_archive_dep`.
 
 ## Usage
 
