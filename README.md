@@ -33,33 +33,21 @@ axl_archive_dep(
 `auto_use_tasks = True` registers `aspect rbe check` and `aspect rbe analyze`
 as CLI commands.
 
-### Requirements
-
-Both tasks run on any current aspect-cli **when invoked from inside the target
-workspace** (`cd <repo> && aspect rbe check`).
-
-The `--workspace <path>` flag (analyze any repo from elsewhere) relies on
-`current_dir` support on `ctx.bazel.query()` / `ctx.bazel.info()` / `ctx.bazel.test()`,
-a runtime feature introduced in
-[aspect-build/aspect-cli#1229](https://github.com/aspect-build/aspect-cli/pull/1229).
-On older CLIs the flag fails with `Found 'current_dir' extra named parameter`;
-omit it and run from the workspace instead. Set the concrete minimum version
-here once #1229's runtime changes ship in a release.
-
 ## Usage
+
+The module is installed in a repo's `MODULE.aspect`, so the tasks always run
+against the repo you invoke them from.
 
 ```sh
 # Static checks only, fail CI on any blocker:
 aspect rbe check --fail-on-blocker -- //...
 
-# Analyze a workspace from anywhere; write plain-text + JSON reports:
-aspect rbe analyze --workspace /path/to/repo \
-    --report-out rbe.txt --json-out rbe.json -- //...
+# Full analysis; write plain-text + JSON reports:
+aspect rbe analyze --report-out rbe.txt --json-out rbe.json -- //...
 ```
 
 Key flags:
 
-- `--workspace <path>` — analyze any repo from anywhere (default: current dir).
 - `--report-out <file>` — also write the report as plain text (no ANSI color).
 - `--json-out <file>` — (`analyze` only) also write a machine-readable report.
 - `--fail-on-blocker` — (`check`) exit non-zero on any blocker-severity finding.
