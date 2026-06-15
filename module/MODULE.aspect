@@ -1,0 +1,2 @@
+use_task("rbe.axl", "check")
+use_task("rbe.axl", "analyze")
