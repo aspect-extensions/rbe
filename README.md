@@ -35,12 +35,16 @@ as CLI commands.
 
 ### Requirements
 
-`aspect rbe analyze` depends on runtime features (`current_dir` on
-`ctx.bazel.query()` / `ctx.bazel.info()` and workspace-directory threading for
-the instrumented test run) introduced in
+Both tasks run on any current aspect-cli **when invoked from inside the target
+workspace** (`cd <repo> && aspect rbe check`).
+
+The `--workspace <path>` flag (analyze any repo from elsewhere) relies on
+`current_dir` support on `ctx.bazel.query()` / `ctx.bazel.info()` / `ctx.bazel.test()`,
+a runtime feature introduced in
 [aspect-build/aspect-cli#1229](https://github.com/aspect-build/aspect-cli/pull/1229).
-Requires an aspect-cli release that includes those changes (set the concrete
-minimum version here once published).
+On older CLIs the flag fails with `Found 'current_dir' extra named parameter`;
+omit it and run from the workspace instead. Set the concrete minimum version
+here once #1229's runtime changes ship in a release.
 
 ## Usage
 
