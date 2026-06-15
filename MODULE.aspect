@@ -1,0 +1,5 @@
+axl_local_dep(
+    name = "rbe",
+    path = "module",
+    auto_use_tasks = True,
+)
