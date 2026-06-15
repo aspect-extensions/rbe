@@ -57,10 +57,25 @@ def _workspace_dir(ctx: TaskContext) -> str | None:
         fail("--workspace {} does not exist".format(ws))
     return ws
 
+# `current_dir` on ctx.bazel.{query,info,test} is a runtime feature added
+# alongside this task group. Older CLIs reject the named parameter outright
+# (the param name is unknown to the old signature, regardless of value), so
+# we only pass it when a --workspace was actually requested. Default-cwd runs
+# then work on any CLI; --workspace requires a CLI new enough to accept it.
+def _bazel_query(ctx: TaskContext, workspace: str | None):
+    if workspace:
+        return ctx.bazel.query(current_dir = workspace)
+    return ctx.bazel.query()
+
+def _bazel_info(ctx: TaskContext, workspace: str | None):
+    if workspace:
+        return ctx.bazel.info(current_dir = workspace)
+    return ctx.bazel.info()
+
 def _collect_targets(ctx: TaskContext, patterns: list, workspace: str | None) -> dict:
     """label -> TargetInfo for every test target under the patterns."""
     out = {}
-    for rule in ctx.bazel.query(current_dir = workspace).raw(_query_expr(patterns)).eval():
+    for rule in _bazel_query(ctx, workspace).raw(_query_expr(patterns)).eval():
         if not hasattr(rule, "rule_class"):
             continue  # source/generated files in the result set
         tags = _attr_value(rule, "tags") or []
@@ -133,7 +148,7 @@ def _write_report(ctx: TaskContext, path: str, text: str):
 
 def _check_impl(ctx: TaskContext) -> int:
     workspace = _workspace_dir(ctx)
-    ws_root = ctx.bazel.info(current_dir = workspace).get("workspace", "")
+    ws_root = _bazel_info(ctx, workspace).get("workspace", "")
     targets = _collect_targets(ctx, ctx.args.targets, workspace)
     violations = sort_violations(check_static(targets.values(), _read_rc_lines(ctx, ws_root)))
     score = readiness_score(violations, 0.0)
@@ -188,7 +203,7 @@ check = task(
 def _analyze_impl(ctx: TaskContext) -> int:
     patterns = ctx.args.targets
     workspace = _workspace_dir(ctx)
-    ws_root = ctx.bazel.info(current_dir = workspace).get("workspace", "")
+    ws_root = _bazel_info(ctx, workspace).get("workspace", "")
     targets = _collect_targets(ctx, patterns, workspace)
     rc_lines = _read_rc_lines(ctx, ws_root)
 
@@ -199,13 +214,21 @@ def _analyze_impl(ctx: TaskContext) -> int:
     # BES iterator handle must exist before the spawn so the early event
     # burst is buffered (see DEVELOPMENT.md "BES streaming").
     events = bazel.build_events.iterator()
-    build = ctx.bazel.test(
-        flags = flags,
-        build_events = [events],
-        execution_log = True,
-        current_dir = workspace,
-        *patterns
-    )
+    if workspace:
+        build = ctx.bazel.test(
+            flags = flags,
+            build_events = [events],
+            execution_log = True,
+            current_dir = workspace,
+            *patterns
+        )
+    else:
+        build = ctx.bazel.test(
+            flags = flags,
+            build_events = [events],
+            execution_log = True,
+            *patterns
+        )
 
     # Drain the execution log BEFORE wait() — the stream is consumed as
     # part of wait() (see build_methods docs).
