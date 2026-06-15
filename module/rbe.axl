@@ -28,6 +28,26 @@ load("./lib/rbe_advisor.axl", "SpawnFact", "TargetInfo", "aggregate_test_wall", 
 
 _RC_FILES = [".bazelrc", "tools/bazel.rc", "user.bazelrc"]
 
+# Files that mark a Bazel workspace root (any one is sufficient).
+_WORKSPACE_MARKERS = ["MODULE.bazel", "WORKSPACE.bazel", "WORKSPACE", "REPO.bazel"]
+
+def _require_bazel_workspace(ctx: TaskContext):
+    """Fail early with a clear message if cwd isn't inside a Bazel workspace.
+
+    Bazel locates the workspace by walking up from the working directory, so we
+    do the same: an opaque `bazel info failed with exit code 2` becomes an
+    actionable error when `aspect rbe` is run somewhere with no MODULE.bazel /
+    WORKSPACE above it (e.g. the extension's own repo)."""
+    d = ctx.std.env.current_dir()
+    for _ in range(64):
+        for m in _WORKSPACE_MARKERS:
+            if ctx.std.fs.exists(d + "/" + m):
+                return
+        if d == "" or d == "/":
+            break
+        d = d.rsplit("/", 1)[0]
+    fail("`aspect rbe` must run from inside a Bazel workspace — no MODULE.bazel / WORKSPACE found in the current directory or any parent.")
+
 def _query_expr(patterns: list) -> str:
     return "tests({})".format(" + ".join(patterns))
 
@@ -123,6 +143,7 @@ def _write_report(ctx: TaskContext, path: str, text: str):
     print("Report written to " + path)
 
 def _check_impl(ctx: TaskContext) -> int:
+    _require_bazel_workspace(ctx)
     ws_root = ctx.bazel.info().get("workspace", "")
     targets = _collect_targets(ctx, ctx.args.targets)
     violations = sort_violations(check_static(targets.values(), _read_rc_lines(ctx, ws_root)))
@@ -172,6 +193,7 @@ check = task(
 # ---------------------------------------------------------------- analyze
 
 def _analyze_impl(ctx: TaskContext) -> int:
+    _require_bazel_workspace(ctx)
     patterns = ctx.args.targets
     ws_root = ctx.bazel.info().get("workspace", "")
     targets = _collect_targets(ctx, patterns)
