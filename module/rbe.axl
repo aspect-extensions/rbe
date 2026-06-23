@@ -71,7 +71,7 @@ def _attr_value(rule, name: str):
 def _collect_targets(ctx: TaskContext, patterns: list) -> dict:
     """label -> TargetInfo for every test target under the patterns."""
     out = {}
-    for rule in ctx.bazel.query().raw(_query_expr(patterns)).eval():
+    for rule in ctx.bazel.query(_query_expr(patterns)):
         if not hasattr(rule, "rule_class"):
             continue  # source/generated files in the result set
         tags = _attr_value(rule, "tags") or []
