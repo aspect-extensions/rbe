@@ -164,9 +164,64 @@ def test_rbe_advisor(tc: int) -> int:
     tc = test_case(tc, "\x1b[1;31m40/100\x1b[0m" in render_check_report(dvs, 40, ansi = True), "rbe: score <70 renders bold red")
     return tc
 
+def test_rbe_timing(tc: int) -> int:
+    # ENG-1712: per-spawn wall time is unavailable from the compact exec log
+    # (axl drops the SpawnMetrics Duration fields), and Bazel's critical path
+    # is absent from the BEP. Timing must come from measured per-label wall
+    # (BES test_details), never from spawn.wall_s or a BEP critical path.
+
+    # --- critical-path floor derived from the slowest single test
+    walls = {"//x:a": 10.0, "//x:b": 40.0, "//x:c": 5.0}
+    tgts = {l: TargetInfo(label = l) for l in walls}
+    plan = size_pool(
+        targets_by_label = tgts,
+        wall_by_label = walls,
+        spawns = [],
+        critical_path_s = 0.0,  # BEP critical path unavailable -> derive from walls
+        target_wall_s = 0.0,
+        clouds = ["aws"],
+    )
+    tc = test_case(tc, abs(plan.critical_path_s - 40.0) < 0.001, "rbe: critical path floored to slowest test when BEP value absent")
+    tc = test_case(tc, abs(plan.min_achievable_wall_s - 46.0) < 0.001, "rbe: min achievable wall = slowest test * overhead (40 * 1.15)")
+    tc = test_case(tc, plan.min_achievable_wall_s > 0.0, "rbe: min achievable wall is never spuriously zero when tests ran")
+
+    # --- remotable %% weighted by measured wall, NOT by (zero) spawn metrics
+    walls2 = {"//y:rem": 80.0, "//y:loc": 20.0}
+    tgts2 = {l: TargetInfo(label = l) for l in walls2}
+    spawns2 = [
+        SpawnFact(label = "//y:rem", mnemonic = "TestRunner", wall_s = 0.0),
+        SpawnFact(label = "//y:loc", mnemonic = "TestRunner", wall_s = 0.0, remotable = False),
+    ]
+    plan2 = size_pool(
+        targets_by_label = tgts2,
+        wall_by_label = walls2,
+        spawns = spawns2,
+        critical_path_s = 0.0,
+        clouds = ["aws"],
+    )
+    tc = test_case(tc, abs(plan2.pct_compute_remotable - 80.0) < 0.001, "rbe: remotable% weighted by measured wall, not spawn.wall_s")
+
+    # --- cache-hit + sandbox dup spawns: label counts as cacheable (OR)
+    walls3 = {"//z:a": 50.0}
+    tgts3 = {"//z:a": TargetInfo(label = "//z:a")}
+    spawns3 = [
+        SpawnFact(label = "//z:a", mnemonic = "TestRunner", wall_s = 0.0, remote_cacheable = False),
+        SpawnFact(label = "//z:a", mnemonic = "TestRunner", wall_s = 0.0, remote_cacheable = True),
+    ]
+    plan3 = size_pool(
+        targets_by_label = tgts3,
+        wall_by_label = walls3,
+        spawns = spawns3,
+        critical_path_s = 0.0,
+        clouds = ["aws"],
+    )
+    tc = test_case(tc, abs(plan3.pct_compute_cacheable - 100.0) < 0.001, "rbe: exec+cache-hit dup spawns -> label is remote-cacheable")
+    return tc
+
 def impl(ctx: TaskContext) -> int:
     tc = 0
     tc = test_rbe_advisor(tc)
+    tc = test_rbe_timing(tc)
     print(tc, "tests passed")
     return 0
 
