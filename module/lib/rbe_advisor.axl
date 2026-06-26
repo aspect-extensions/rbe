@@ -609,6 +609,15 @@ def size_pool(
         class_tests[wc.name] = class_tests.get(wc.name, 0) + 1
         total_cpu_s += cpu_s
 
+    # Critical-path floor. The BEP carries no critical path, and the compact
+    # exec log's per-spawn timing is unavailable (axl omits the SpawnMetrics
+    # Duration fields), so when no measured critical path is supplied, fall
+    # back to the slowest single test — the wall-time floor under unbounded
+    # parallelism. Without this the floor is 0 and min achievable wall reports
+    # 0s. (ENG-1712)
+    if critical_path_s <= 0.0:
+        critical_path_s = max([0.0] + [w for w in wall_by_label.values()])
+
     min_wall = critical_path_s * REMOTE_OVERHEAD
     auto_target = target_wall_s <= 0.0
     if auto_target:
@@ -641,15 +650,27 @@ def size_pool(
             instances = instances,
         )
 
+    # Remotable / remote-cacheable share of compute. Per-spawn wall metrics
+    # are unavailable (see above), so determine each label's remotability and
+    # cacheability from its spawns' flags and weight by the measured per-label
+    # wall time instead of the (always-zero) spawn wall. A label counts as
+    # remotable / cacheable if ANY of its spawns is: an executed sandbox spawn
+    # and its disk-cache-hit twin can disagree, and the positive signal is the
+    # trustworthy one in a no-remote local run. (ENG-1712)
+    label_remotable = {}
+    label_cacheable = {}
+    for sp in spawns:
+        label_remotable[sp.label] = label_remotable.get(sp.label, False) or sp.remotable
+        label_cacheable[sp.label] = label_cacheable.get(sp.label, False) or sp.remote_cacheable
     spawn_cpu = 0.0
     remotable_cpu = 0.0
     cacheable_cpu = 0.0
-    for sp in spawns:
-        spawn_cpu += sp.wall_s
-        if sp.remotable:
-            remotable_cpu += sp.wall_s
-        if sp.remote_cacheable:
-            cacheable_cpu += sp.wall_s
+    for label, wall in wall_by_label.items():
+        spawn_cpu += wall
+        if label_remotable.get(label, True):
+            remotable_cpu += wall
+        if label_cacheable.get(label, True):
+            cacheable_cpu += wall
     if spawn_cpu <= 0.0:
         spawn_cpu = 1.0
 
