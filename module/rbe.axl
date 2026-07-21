@@ -22,11 +22,51 @@ v0 scope notes:
   RBE telemetry. Treat the capacity plan as a starting point, not a quote.
 """
 
-load("@aspect//lib/bazel_results.axl", "init_data", "process_event")
-load("@aspect//lib/environment.axl", "color_enabled")
 load("./lib/rbe_advisor.axl", "SpawnFact", "TargetInfo", "aggregate_test_wall", "attach_costs", "check_dynamic", "check_static", "readiness_score", "render_check_report", "render_disclaimer", "render_sizing_report", "size_pool", "sort_violations")
 
 _RC_FILES = [".bazelrc", "tools/bazel.rc", "user.bazelrc"]
+
+def _color_enabled(std) -> bool:
+    """Should ANSI color be emitted to stdout?
+
+    True on a real TTY, or on a recognized CI host (GHA, Buildkite, CircleCI,
+    GitLab) — those render ANSI in log viewers despite a non-TTY pipe.
+
+    Inlined rather than loaded from `@aspect//…/environment.axl`: aspect-cli
+    #1282 (v2026.27+) moved those internal libs under `@aspect//private/` with
+    no stable-load contract, so the extension depends only on public API."""
+    if std.io.stdout.is_tty:
+        return True
+    env = std.env
+    return bool(
+        env.var("GITHUB_ACTIONS") or
+        env.var("BUILDKITE") or
+        env.var("CIRCLECI") or
+        env.var("GITLAB_CI"),
+    )
+
+def _test_wall_from_bes(events) -> dict:
+    """Drain the BES stream into `{label: {"duration_ms": ms}}` — the
+    per-test measured wall that `aggregate_test_wall` falls back to when a
+    label's spawns carry no metrics.
+
+    Parses the public `bazel.build_events` stream directly instead of the
+    internal `@aspect//…/bazel_results.axl` `init_data`/`process_event`
+    (made private in aspect-cli #1282). A `test_result` fires once per
+    shard/attempt; last write wins, matching the single-attempt fallback the
+    aggregator expects. Field access is tolerant (getattr) to survive BES
+    schema drift across Bazel versions."""
+    out = {}
+    for event in events:
+        if getattr(event, "kind", "") != "test_result":
+            continue
+        label = getattr(getattr(event, "id", None), "label", "") or ""
+        if not label:
+            continue
+        payload = getattr(event, "payload", None)
+        dur = getattr(payload, "test_attempt_duration_millis", 0) or 0
+        out[label] = {"duration_ms": dur}
+    return out
 
 # Files that mark a Bazel workspace root (any one is sufficient).
 _WORKSPACE_MARKERS = ["MODULE.bazel", "WORKSPACE.bazel", "WORKSPACE", "REPO.bazel"]
@@ -148,7 +188,7 @@ def _check_impl(ctx: TaskContext) -> int:
     targets = _collect_targets(ctx, ctx.args.targets)
     violations = sort_violations(check_static(targets.values(), _read_rc_lines(ctx, ws_root)))
     score = readiness_score(violations, 0.0)
-    ansi = color_enabled(ctx.std)
+    ansi = _color_enabled(ctx.std)
     note = "(static checks only — run `aspect rbe analyze` for dynamic checks and capacity sizing)"
     print(render_check_report(violations, score, ansi = ansi, workspace_root = ws_root))
     print("")
@@ -222,16 +262,14 @@ def _analyze_impl(ctx: TaskContext) -> int:
             continue
         spawns.append(_spawn_fact(sp))
 
-    data = init_data()
-    for event in events:
-        process_event(data, event)
+    test_wall_ms = _test_wall_from_bes(events)
     status = build.wait()
     if not status.success:
         print("warning: bazel test exited with code {} — analysis covers the targets that ran".format(status.code))
 
     # Per-test wall time: summed exec-log spawn metrics (covers every
     # shard/attempt), BES durations as fallback — see aggregate_test_wall.
-    wall_by_label = aggregate_test_wall(spawns, data["bazel"]["test_details"])
+    wall_by_label = aggregate_test_wall(spawns, test_wall_ms)
 
     violations = check_static(targets.values(), rc_lines) + check_dynamic(spawns, targets)
     violations = sort_violations(attach_costs(violations, wall_by_label))
@@ -245,7 +283,7 @@ def _analyze_impl(ctx: TaskContext) -> int:
         targets_by_label = targets,
         wall_by_label = wall_by_label,
         spawns = spawns,
-        critical_path_s = float(data["bazel"]["critical_path_ms"]) / 1000.0,
+        critical_path_s = 0.0,  # BEP critical path unavailable; size_pool derives it from measured wall (ENG-1712)
         target_wall_s = float(ctx.args.target_wall_time),
         utilization = float(ctx.args.utilization_pct) / 100.0,
         headroom = float(ctx.args.headroom_pct) / 100.0,
@@ -253,7 +291,7 @@ def _analyze_impl(ctx: TaskContext) -> int:
         clouds = ["aws", "gcp"] if ctx.args.cloud == "both" else [ctx.args.cloud],
     )
 
-    ansi = color_enabled(ctx.std)
+    ansi = _color_enabled(ctx.std)
     title = "# RBE readiness report"
     experimental = "(experimental)"
     if ansi:
