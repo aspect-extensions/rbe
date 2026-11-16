@@ -246,19 +246,22 @@ def _analyze_impl(ctx: TaskContext) -> int:
     # BES iterator handle must exist before the spawn so the early event
     # burst is buffered (see DEVELOPMENT.md "BES streaming").
     events = bazel.build_events.iterator()
+    # Spawn-only handle: aspect-cli #1675 (2026.47) removed build.execution_logs()
+    # and execution_log = True; kinds= filters in Rust before entries reach AXL.
+    exec_entries = bazel.execution_log.iterator(kinds = ["spawn"])
     build = ctx.bazel.test(
         flags = flags,
         build_events = [events],
-        execution_log = True,
+        execution_log = [exec_entries],
         *patterns
     )
 
-    # Drain the execution log BEFORE wait() — the stream is consumed as
-    # part of wait() (see build_methods docs).
+    # Drain the execution log BEFORE wait() — wait() releases every decoded
+    # consumer and joins the reader.
     spawns = []
-    for entry in build.execution_logs():
-        sp = entry.type  # oneof payload: invocation | file | spawn | ...
-        if type(sp) != "spawn" or not sp.target_label:
+    for entry in exec_entries:
+        sp = entry.type
+        if not sp.target_label:
             continue
         spawns.append(_spawn_fact(sp))
 
